@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Low-Poly Drone Arena (105m x 68m)</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    html, body { width: 100%; height: 100%; overflow: hidden; background: #87ceeb; font-family: system-ui, sans-serif; touch-action: none; }
+    canvas { display: block; width: 100%; height: 100%; }
+
+    /* HUD Atas */
+    #hud {
+      position: fixed; top: 12px; left: 12px; right: 12px;
+      display: flex; justify-content: space-between; align-items: center;
+      pointer-events: none; z-index: 10; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.7);
+      font-size: 13px; font-weight: 600;
+    }
+    .telemetry { background: rgba(0,0,0,0.4); padding: 6px 12px; border-radius: 8px; backdrop-filter: blur(4px); }
+    #btn-fullscreen {
+      pointer-events: auto; background: rgba(0,0,0,0.6); color: #fff;
+      border: 1px solid rgba(255,255,255,0.4); padding: 8px 14px; border-radius: 8px;
+      font-size: 13px; font-weight: bold; cursor: pointer;
+    }
+
+    /* Kontrol Virtual Joystick Mobile */
+    .stick-zone {
+      position: fixed; bottom: 24px; width: 130px; height: 130px;
+      border-radius: 50%; background: rgba(255, 255, 255, 0.18);
+      border: 2px solid rgba(255, 255, 255, 0.4); z-index: 10;
+      display: flex; justify-content: center; align-items: center;
+    }
+    #zone-left { left: 24px; }
+    #zone-right { right: 24px; }
+    .stick-knob {
+      width: 52px; height: 52px; border-radius: 50%;
+      background: rgba(255, 255, 255, 0.75); box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      pointer-events: none; transform: translate(0px, 0px);
+    }
+    .stick-label {
+      position: absolute; top: -22px; font-size: 11px; color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.8); pointer-events: none;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="hud">
+    <div class="telemetry" id="telemetry">ALT: 0.0m | SPD: 0.0 m/s</div>
+    <button id="btn-fullscreen">[ ] Full Screen</button>
+  </div>
+
+  <div id="zone-left" class="stick-zone">
+    <span class="stick-label">GAS / PUTAR</span>
+    <div id="knob-left" class="stick-knob"></div>
+  </div>
+
+  <div id="zone-right" class="stick-zone">
+    <span class="stick-label">ARAH TERBANG</span>
+    <div id="knob-right" class="stick-knob"></div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    // 1. INISIALISASI SCENE & RENDERER RINGAN
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 60, 190); // Sembunyikan batas dunia secara halus
+
+    const camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 220);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5)); // Hemat GPU HP
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Pencahayaan Low-Poly (Hemat Performa, Tanpa Shadow Map)
+    const hemiLight = new THREE.HemisphereLight(0xffffff, 0x3b7a2a, 1.1);
+    scene.add(hemiLight);
+    const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.2);
+    dirLight.position.set(40, 80, 30);
+    scene.add(dirLight);
+
+    // 2. ARENA LAPANGAN SEPAK BOLA ASLI (105m x 68m)
+    const FIELD_W = 105; // Sumbu X
+    const FIELD_D = 68;  // Sumbu Z
+
+    // Rumput utama & area luar
+    const groundOuter = new THREE.Mesh(
+      new THREE.PlaneGeometry(320, 320),
+      new THREE.MeshLambertMaterial({ color: 0x3a6b29 })
+    );
+    groundOuter.rotation.x = -Math.PI / 2;
+    groundOuter.position.y = -0.02;
+    scene.add(groundOuter);
+
+    const fieldMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(FIELD_W, FIELD_D),
+      new THREE.MeshLambertMaterial({ color: 0x4ca638 })
+    );
+    fieldMesh.rotation.x = -Math.PI / 2;
+    scene.add(fieldMesh);
+
+    // Garis Lapangan Putih (LineSegments sangat ringan)
+    const lineMat = new THREE.LineBasicMaterial({ color: 0xffffff });
+    function createRectLines(w, d, xOffset = 0) {
+      const hw = w / 2, hd = d / 2;
+      const pts = [
+        new THREE.Vector3(xOffset - hw, 0.02, -hd), new THREE.Vector3(xOffset + hw, 0.02, -hd),
+        new THREE.Vector3(xOffset + hw, 0.02, hd),  new THREE.Vector3(xOffset - hw, 0.02, hd),
+        new THREE.Vector3(xOffset - hw, 0.02, -hd)
+      ];
+      return new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat);
+    }
+    scene.add(createRectLines(FIELD_W, FIELD_D)); // Garis luar
+    scene.add(createRectLines(16.5, 40.3, -FIELD_W / 2 + 8.25)); // Kotak penalti kiri
+    scene.add(createRectLines(16.5, 40.3, FIELD_W / 2 - 8.25));  // Kotak penalti kanan
+
+    // Garis tengah & lingkaran tengah (radius 9.15m)
+    const midLinePts = [new THREE.Vector3(0, 0.02, -FIELD_D / 2), new THREE.Vector3(0, 0.02, FIELD_D / 2)];
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(midLinePts), lineMat));
+    const circlePts = [];
+    for (let i = 0; i <= 32; i++) {
+      const a = (i / 32) * Math.PI * 2;
+      circlePts.push(new THREE.Vector3(Math.cos(a) * 9.15, 0.02, Math.sin(a) * 9.15));
+    }
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(circlePts), lineMat));
+
+    // Gawang Sepak Bola (7.32m x 2.44m)
+    function createGoal(xPos) {
+      const goalGroup = new THREE.Group();
+      const postMat = new THREE.MeshLambertMaterial({ color: 0xf5f5f5 });
+      const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.44, 6);
+      const crossGeo = new THREE.CylinderGeometry(0.08, 0.08, 7.32, 6);
+
+      const leftPost = new THREE.Mesh(postGeo, postMat);
+      leftPost.position.set(0, 1.22, -3.66);
+      const rightPost = new THREE.Mesh(postGeo, postMat);
+      rightPost.position.set(0, 1.22, 3.66);
+      const crossbar = new THREE.Mesh(crossGeo, postMat);
+      crossbar.rotation.x = Math.PI / 2;
+      crossbar.position.set(0, 2.44, 0);
+
+      goalGroup.add(leftPost, rightPost, crossbar);
+      goalGroup.position.x = xPos;
+      scene.add(goalGroup);
+    }
+    createGoal(-FIELD_W / 2);
+    createGoal(FIELD_W / 2);
+
+    // Dekorasi Low-Poly: Pohon di luar lapangan & Cincin Tantangan Udara
+    const treeTrunkMat = new THREE.MeshLambertMaterial({ color: 0x6b4423, flatShading: true });
+    const treeLeafMat = new THREE.MeshLambertMaterial({ color: 0x2d6e22, flatShading: true });
+    for (let i = 0; i < 28; i++) {
+      const angle = (i / 28) * Math.PI * 2;
+      const rx = 62 + Math.random() * 25;
+      const rz = 44 + Math.random() * 25;
+      const tree = new THREE.Group();
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.5, 2.5, 5), treeTrunkMat);
+      trunk.position.y = 1.25;
+      const leaves = new THREE.Mesh(new THREE.ConeGeometry(2.4, 6, 5), treeLeafMat);
+      leaves.position.y = 5;
+      tree.add(trunk, leaves);
+      tree.position.set(Math.cos(angle) * rx, 0, Math.sin(angle) * rz);
+      scene.add(tree);
+    }
+
+    // 5 Ring Low-Poly untuk latihan manuver
+    const ringGeo = new THREE.TorusGeometry(2.2, 0.18, 6, 12);
+    const ringMat = new THREE.MeshLambertMaterial({ color: 0xffaa00, flatShading: true });
+    [
+      [0, 5, 0], [-25, 8, -12], [25, 10, 12], [-35, 4, 15], [35, 6, -15]
+    ].forEach(([x, y, z], idx) => {
+      const ring = new THREE.Mesh(ringGeo, ringMat);
+      ring.position.set(x, y, z);
+      ring.rotation.y = idx * 0.7;
+      scene.add(ring);
+    });
+
+    // 3. MODEL DRONE SKALA ASLI (~0.4 meter / 40 cm)
+    const droneGroup = new THREE.Group();
+    const bodyMesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.18, 0.06, 0.24),
+      new THREE.MeshLambertMaterial({ color: 0x222222, flatShading: true })
+    );
+    // Lampu indikator depan (merah) & belakang (hijau) agar orientasi jelas
+    const frontLed = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.03, 0.02),
+      new THREE.MeshBasicMaterial({ color: 0xff2222 })
+    );
+    frontLed.position.set(0, 0, -0.125);
+    const backLed = new THREE.Mesh(
+      new THREE.BoxGeometry(0.12, 0.03, 0.02),
+      new THREE.MeshBasicMaterial({ color: 0x22ff44 })
+    );
+    backLed.position.set(0, 0, 0.125);
+    droneGroup.add(bodyMesh, frontLed, backLed);
+
+    // 4 Lengan & Baling-Baling
+    const rotors = [];
+    const armGeo = new THREE.BoxGeometry(0.36, 0.02, 0.025);
+    const armMat = new THREE.MeshLambertMaterial({ color: 0xdd3333 });
+    const arm1 = new THREE.Mesh(armGeo, armMat); arm1.rotation.y = Math.PI / 4;
+    const arm2 = new THREE.Mesh(armGeo, armMat); arm2.rotation.y = -Math.PI / 4;
+    droneGroup.add(arm1, arm2);
+
+    const rotorGeo = new THREE.BoxGeometry(0.16, 0.005, 0.02);
+    const rotorMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    [[-0.13, -0.13], [0.13, -0.13], [-0.13, 0.13], [0.13, 0.13]].forEach(([rx, rz]) => {
+      const rotor = new THREE.Mesh(rotorGeo, rotorMat);
+      rotor.position.set(rx, 0.025, rz);
+      droneGroup.add(rotor);
+      rotors.push(rotor);
+    });
+    scene.add(droneGroup);
+
+    // Bayangan Palsu (Blob Shadow) di tanah untuk bantu estimasi jarak mendarat
+    const shadowMesh = new THREE.Mesh(
+      new THREE.CircleGeometry(0.25, 12),
+      new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 })
+    );
+    shadowMesh.rotation.x = -Math.PI / 2;
+    shadowMesh.position.y = 0.015;
+    scene.add(shadowMesh);
+
+    // 4. VARIABEL FISIKA DRONE
+    const physics = {
+      pos: new THREE.Vector3(0, 0.1, 0),
+      vel: new THREE.Vector3(0, 0, 0),
+      yaw: 0,
+      pitch: 0,
+      roll: 0,
+      mass: 1.2,          // kg
+      gravity: 9.81,      // m/s^2
+      maxTilt: 0.58,      // ~33 derajat
+      drag: 0.85,         // Hambatan udara
+      groundY: 0.08
+    };
+
+    // State Input Kontrol (-1 sampai 1)
+    const input = { throttle: 0, yaw: 0, pitch: 0, roll: 0 };
+
+    // 5. VIRTUAL TOUCH JOYSTICK (MULTI-TOUCH HP)
+    function setupJoystick(zoneId, knobId, onMove) {
+      const zone = document.getElementById(zoneId);
+      const knob = document.getElementById(knobId);
+      const maxRadius = 42;
+      let touchId = null;
+
+      function updateStick(clientX, clientY) {
+        const rect = zone.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2;
+        const cy = rect.top + rect.height / 2;
+        let dx = clientX - cx;
+        let dy = clientY - cy;
+        const dist = Math.hypot(dx, dy);
+        if (dist > maxRadius) {
+          dx = (dx / dist) * maxRadius;
+          dy = (dy / dist) * maxRadius;
+        }
+        knob.style.transform = `translate(${dx}px, ${dy}px)`;
+        onMove(dx / maxRadius, -dy / maxRadius); // Y positif = ke atas
+      }
+
+      zone.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        if (touchId === null) {
+          const t = e.changedTouches[0];
+          touchId = t.identifier;
+          updateStick(t.clientX, t.clientY);
+        }
+      }, { passive: false });
+
+      zone.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        for (let t of e.changedTouches) {
+          if (t.identifier === touchId) updateStick(t.clientX, t.clientY);
+        }
+      }, { passive: false });
+
+      const resetStick = (e) => {
+        for (let t of e.changedTouches) {
+          if (t.identifier === touchId) {
+            touchId = null;
+            knob.style.transform = `translate(0px, 0px)`;
+            onMove(0, 0);
+          }
+        }
+      };
+      zone.addEventListener('touchend', resetStick);
+      zone.addEventListener('touchcancel', resetStick);
+    }
+
+    setupJoystick('zone-left', 'knob-left', (x, y) => { input.yaw = -x; input.throttle = y; });
+    setupJoystick('zone-right', 'knob-right', (x, y) => { input.roll = -x; input.pitch = -y; });
+
+    // Dukungan Keyboard PC (untuk testing di laptop)
+    const keys = {};
+    window.addEventListener('keydown', (e) => keys[e.code] = true);
+    window.addEventListener('keyup', (e) => keys[e.code] = false);
+
+    function applyKeyboardFallback() {
+      if (keys['KeyW']) input.throttle = 1;
+      else if (keys['KeyS']) input.throttle = -1;
+      else if (!document.getElementById('zone-left').matches(':active')) input.throttle = 0;
+
+      if (keys['KeyA']) input.yaw = 1;
+      else if (keys['KeyD']) input.yaw = -1;
+      else if (!document.getElementById('zone-left').matches(':active')) input.yaw = 0;
+
+      if (keys['ArrowUp']) input.pitch = -1;
+      else if (keys['ArrowDown']) input.pitch = 1;
+      else if (!document.getElementById('zone-right').matches(':active')) input.pitch = 0;
+
+      if (keys['ArrowLeft']) input.roll = 1;
+      else if (keys['ArrowRight']) input.roll = -1;
+      else if (!document.getElementById('zone-right').matches(':active')) input.roll = 0;
+    }
+
+    // 6. FULL SCREEN API & RESIZE
+    const fsBtn = document.getElementById('btn-fullscreen');
+    fsBtn.addEventListener('click', () => {
+      const docEl = document.documentElement;
+      if (!document.fullscreenElement) {
+        (docEl.requestFullscreen || docEl.webkitRequestFullscreen)?.call(docEl);
+        if (screen.orientation && screen.orientation.lock) {
+          screen.orientation.lock('landscape').catch(() => {});
+        }
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+      }
+    });
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // 7. GAME LOOP & STEP FISIKA
+    const clock = new THREE.Clock();
+    const telemetryEl = document.getElementById('telemetry');
+    const upVec = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = Math.min(clock.getDelta(), 0.05); // Batasi dt agar fisika stabil saat lag
+
+      if (Object.values(keys).some(Boolean)) applyKeyboardFallback();
+
+      // Rotasi & Kemiringan Target
+      physics.yaw += input.yaw * 2.2 * dt;
+      const targetPitch = input.pitch * physics.maxTilt;
+      const targetRoll = input.roll * physics.maxTilt;
+      physics.pitch += (targetPitch - physics.pitch) * 8 * dt;
+      physics.roll += (targetRoll - physics.roll) * 8 * dt;
+
+      euler.set(physics.pitch, physics.yaw, physics.roll);
+      quat.setFromEuler(euler);
+
+      // Gaya Dorong (Hover otomatis di throttle = 0 saat di udara, naik/turun sesuai stik)
+      const hoverThrust = physics.mass * physics.gravity;
+      const thrustForce = Math.max(0, hoverThrust + input.throttle * 11.5);
+
+      upVec.set(0, 1, 0).applyQuaternion(quat);
+      const accel = upVec.multiplyScalar(thrustForce / physics.mass);
+      accel.y -= physics.gravity; // Gravitasi
+
+      // Hambatan Udara (Drag)
+      accel.x -= physics.vel.x * physics.drag;
+      accel.y -= physics.vel.y * (physics.drag * 0.8);
+      accel.z -= physics.vel.z * physics.drag;
+
+      // Integrasi Kecepatan & Posisi
+      physics.vel.addScaledVector(accel, dt);
+      physics.pos.addScaledVector(physics.vel, dt);
+
+      // Kolisi Tanah & Batas Area Sekitar Stadion
+      if (physics.pos.y <= physics.groundY) {
+        physics.pos.y = physics.groundY;
+        if (physics.vel.y < 0) physics.vel.y *= -0.15; // Pantulan kecil
+        physics.vel.x *= 0.85; // Gesekan tanah
+        physics.vel.z *= 0.85;
+        physics.pitch *= 0.7;
+        physics.roll *= 0.7;
+      }
+      physics.pos.x = THREE.MathUtils.clamp(physics.pos.x, -75, 75);
+      physics.pos.z = THREE.MathUtils.clamp(physics.pos.z, -55, 55);
+      physics.pos.y = Math.min(physics.pos.y, 45); // Batas ketinggian 45m
+
+      // Update Visual Drone & Baling-baling
+      droneGroup.position.copy(physics.pos);
+      droneGroup.quaternion.copy(quat);
+
+      const rotorSpeed = (physics.pos.y > physics.groundY + 0.02 || input.throttle > 0.05) ? 35 : 0;
+      rotors.forEach((r, idx) => r.rotation.y += (idx % 2 === 0 ? 1 : -1) * rotorSpeed * dt);
+
+      // Update Bayangan Palsu
+      shadowMesh.position.x = physics.pos.x;
+      shadowMesh.position.z = physics.pos.z;
+      const shadowScale = Math.max(0.2, 1 - physics.pos.y * 0.06);
+      shadowMesh.scale.set(shadowScale, shadowScale, 1);
+
+      // Kamera Chase Mengikuti Belakang Drone (Jarak 2.2m agar drone 40cm tetap jelas)
+      const camOffset = new THREE.Vector3(0, 0.75, 2.2).applyAxisAngle(new THREE.Vector3(0, 1, 0), physics.yaw);
+      const desiredCamPos = physics.pos.clone().add(camOffset);
+      desiredCamPos.y = Math.max(0.35, desiredCamPos.y);
+      camera.position.lerp(desiredCamPos, 10 * dt);
+      camera.lookAt(physics.pos.x, physics.pos.y + 0.15, physics.pos.z);
+
+      // Update HUD Telemetri
+      const speed = physics.vel.length();
+      telemetryEl.textContent = `ALT: ${(physics.pos.y - physics.groundY).toFixed(1)}m | SPD: ${speed.toFixed(1)} m/s`;
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+  </script>
+</body>
+</html>
